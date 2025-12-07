@@ -15,7 +15,8 @@ from restaurant_utils import (
 )
 
 CHUNK_SIZE = 100
-MAX_THREADS = 32
+MAX_THREADS = 32                 # Phase 1 (cheap, no model)
+MAX_ANALYSIS_THREADS = 4         # Phase 2 (heavy, BERT)
 
 
 class ReviewDataset:
@@ -30,7 +31,7 @@ class ReviewDataset:
 
     Phase 2 (merged analysis for a single restaurant):
         - Uses ONLY the subset of reviews that belong to that restaurant (from Phase 1 cache).
-        - Threads (chunks of 100 reviews) compute sentiment and local per-year aggregates.
+        - Threads (chunks of 100 reviews) compute sentiment in **batch** and local per-year aggregates.
         - The main thread merges those per-year aggregates to produce:
             * ratings_by_year
             * global_rate
@@ -178,37 +179,6 @@ class ReviewDataset:
             * list of restaurants with name, slug, review_count AND
               the list of their reviews
             * per-thread traces
-
-        Returns JSON-like dict:
-        {
-          "total_reviews": int,
-          "restaurants": [
-             {
-               "slug": str,
-               "name": str,
-               "review_count": int,
-               "reviews": [
-                  {
-                    "index": int,
-                    "date": "YYYY-MM-DD" or null,
-                    "review_text": str,
-                    "yelp_url": str
-                  },
-                  ...
-               ]
-             },
-             ...
-          ],
-          "threads": [
-             {
-               "thread_index": int,
-               "rows_processed": int,
-               "unique_restaurants": int,
-               "duration_ms": float
-             },
-             ...
-          ]
-        }
         """
         self._ensure_phase1_cache()
         df = self._df
@@ -219,7 +189,7 @@ class ReviewDataset:
         restaurants_indices = self._restaurants_indices or {}
         thread_traces = self._phase1_threads_cache or []
 
-        # Map slug -> pretty display name (we already built this in _ensure_loaded)
+        # Map slug -> pretty display name
         slug_to_name_map = (
             df.drop_duplicates("restaurant_slug")
             .set_index("restaurant_slug")["restaurant_name"]
@@ -242,7 +212,6 @@ class ReviewDataset:
                 if pd.isna(date_val):
                     date_str = None
                 else:
-                    # isoformat for JSON
                     date_str = (
                         date_val.isoformat()
                         if hasattr(date_val, "isoformat")
@@ -284,29 +253,12 @@ class ReviewDataset:
             - Find all restaurant slugs whose normalized form matches `restaurant_name`.
             - Only process the reviews belonging to those slugs (subset of the dataset).
             - Use threads (chunks of 100 reviews) to:
-                * compute a sentiment-based rating (0–5) for each review
-                * accumulate local per-year sums & counts
+                * compute a sentiment-based rating (1–5) for reviews (in **batch**).
+                * accumulate local per-year sums & counts.
             - The main thread merges per-year sums & counts to produce:
                 * ratings_by_year (last 10 years)
                 * global_rate
                 * per-thread traces
-
-        Returns a JSON-like dict with:
-          - ratings_by_year
-          - global_rate (average of yearly ratings)
-          - analysis: {
-                total_reviews_processed,
-                total_threads,
-                threads: [
-                  {
-                    thread_index,
-                    rows_processed,
-                    rows_with_year,
-                    duration_ms,
-                    years: { "2019": 120, ... }
-                  }
-                ]
-            }
         """
         self._ensure_loaded()
         self._ensure_phase1_cache()
@@ -331,7 +283,7 @@ class ReviewDataset:
         for slug in candidate_slugs:
             candidate_indices.extend(restaurants_indices.get(slug, []))
 
-        # Remove duplicates (in case of weird overlaps) and sort
+        # Remove duplicates and sort
         candidate_indices = sorted(set(candidate_indices))
         total_subset_reviews = len(candidate_indices)
 
@@ -359,7 +311,7 @@ class ReviewDataset:
             }
 
         # --------------------------------------
-        # Phase 2: process only the subset (threads)
+        # Phase 2: process only the subset (threads, but batched model calls)
         # --------------------------------------
         def _iter_subset_ranges(n: int) -> List[tuple]:
             return [(i, min(i + CHUNK_SIZE, n)) for i in range(0, n, CHUNK_SIZE)]
@@ -369,29 +321,39 @@ class ReviewDataset:
         def process_chunk(idx: int, start_pos: int, end_pos: int):
             """
             Process a slice [start_pos, end_pos) of candidate_indices.
-            Each review:
-              - gets a sentiment-based rating
-              - contributes to local per-year sums and counts
+            We only run the model for rows that have a valid year.
             """
             start_t = time.perf_counter()
             rows_processed = int(end_pos - start_pos)
-            local_year_sums: Dict[int, float] = {}
-            local_year_counts: Dict[int, int] = {}
-            rows_with_year = 0
+
+            # Collect texts and years that are valid (have a year)
+            texts: List[str] = []
+            years: List[int] = []
 
             for pos in range(start_pos, end_pos):
                 df_idx = candidate_indices[pos]
                 row = df.loc[df_idx]
 
-                text = row.get("review_text", "") or ""
-                score = float(model.score_review(text))
-
                 year_val = row.get("year", None)
-                if pd.notnull(year_val):
-                    year_int = int(year_val)
-                    local_year_sums[year_int] = local_year_sums.get(year_int, 0.0) + score
-                    local_year_counts[year_int] = local_year_counts.get(year_int, 0) + 1
-                    rows_with_year += 1
+                if pd.isnull(year_val):
+                    # We still count these as processed, but they don't influence ratings
+                    continue
+
+                text = row.get("review_text", "") or ""
+                texts.append(text)
+                years.append(int(year_val))
+
+            rows_with_year = len(texts)
+
+            # If no valid years in this chunk, skip model call
+            local_year_sums: Dict[int, float] = {}
+            local_year_counts: Dict[int, int] = {}
+
+            if rows_with_year > 0:
+                scores = model.score_reviews_batch(texts)
+                for year, score in zip(years, scores):
+                    local_year_sums[year] = local_year_sums.get(year, 0.0) + float(score)
+                    local_year_counts[year] = local_year_counts.get(year, 0) + 1
 
             elapsed = time.perf_counter() - start_t
             stats = {
@@ -405,7 +367,7 @@ class ReviewDataset:
             }
             return stats, local_year_sums, local_year_counts
 
-        max_workers = min(MAX_THREADS, len(ranges)) or 1
+        max_workers = min(MAX_ANALYSIS_THREADS, len(ranges)) or 1
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_idx = {
                 executor.submit(process_chunk, idx, start_pos, end_pos): idx

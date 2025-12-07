@@ -1,64 +1,70 @@
 # sentiment_model.py
 """
-SentimentModel using HuggingFace:
+SentimentModel using VADER (lexicon-based sentiment analysis).
+
+We previously used the HuggingFace model:
     nlptown/bert-base-multilingual-uncased-sentiment
+but that was too slow on CPU for thousands of reviews.
 
-This model predicts star ratings from 1 to 5 directly from text reviews.
-We convert that into a float rating in [1, 5] by taking the expected value
-of the star distribution:
+Now we switch to VADER, which is:
+  - very lightweight
+  - fast even for tens of thousands of reviews
+  - good enough for demo / academic purposes
 
-    rating = sum_{s=1..5} p(s) * s
+VADER returns a "compound" sentiment score in [-1, 1].
+We convert this to a rating in [0, 5] as:
+
+    rating = (compound + 1) / 2 * 5
 
 So:
-  - Very negative → close to 1
-  - Neutral       → around 3
-  - Very positive → close to 5
+  - compound = -1 → rating = 0
+  - compound = 0  → rating = 2.5
+  - compound = +1 → rating = 5
 
-Your existing code just needs:
+Interface (unchanged from the HuggingFace version):
+
     from sentiment_model import SentimentModel
-    score = SentimentModel.instance().score_review(text)
+
+    model = SentimentModel.instance()
+    single_rating = model.score_review("The food was amazing!")
+    batch_ratings = model.score_reviews_batch(["Good", "Bad", "Meh"])
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, Iterable, List
 
-import torch
-import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+import math
 
-MODEL_NAME = "nlptown/bert-base-multilingual-uncased-sentiment"
+import nltk
+from nltk.sentiment import SentimentIntensityAnalyzer
 
 
 @dataclass
 class SentimentModel:
     """
-    Singleton wrapper around the HuggingFace star-rating model.
+    Singleton wrapper around VADER sentiment analyzer.
 
     Usage:
         model = SentimentModel.instance()
         rating = model.score_review("The food was amazing!")
+        ratings = model.score_reviews_batch(["Good", "Bad"])
     """
 
     _instance: ClassVar["SentimentModel | None"] = None
 
-    tokenizer: AutoTokenizer
-    model: AutoModelForSequenceClassification
-    device: int  # -1 = CPU, 0 = cuda:0, etc.
+    analyzer: SentimentIntensityAnalyzer
 
     def __init__(self) -> None:
-        # Load tokenizer + model once
-        self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        self.model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
-        self.model.eval()
+        # Ensure the VADER lexicon is available
+        try:
+            nltk.data.find("sentiment/vader_lexicon.zip")
+        except LookupError:
+            # Download once if missing – you can also do this manually
+            nltk.download("vader_lexicon")
 
-        # Choose device (GPU if available, otherwise CPU)
-        if torch.cuda.is_available():
-            self.device = 0
-            self.model.to(self.device)
-        else:
-            self.device = -1  # CPU
+        self.analyzer = SentimentIntensityAnalyzer()
 
     # ------------------------------------------------------------------
     # Singleton access
@@ -70,48 +76,53 @@ class SentimentModel:
         return cls._instance
 
     # ------------------------------------------------------------------
-    # Text -> rating / 5
+    # Single-review helper (uses batch implementation)
     # ------------------------------------------------------------------
     def score_review(self, text: str) -> float:
         """
-        Analyze a review text and return a rating in [1, 5].
+        Analyze a review text and return a rating in [0, 5].
 
-        Steps:
-          1. Tokenize text for the nlptown model (truncating long reviews).
-          2. Get logits for the 5 star classes.
-          3. Softmax -> probabilities p_1..p_5.
-          4. Compute expected stars: rating = sum(s * p_s), s in {1..5}.
-          5. Round to 2 decimals.
-
-        If the text is empty, we return 3.0 (neutral).
+        If the text is empty, we return 2.5 (neutral).
         """
         if not text or not text.strip():
-            return 3.0  # neutral 3/5
+            return 2.5
+        ratings = self.score_reviews_batch([text])
+        return ratings[0] if ratings else 2.5
 
-        # Tokenize input
-        inputs = self.tokenizer(
-            text,
-            return_tensors="pt",
-            truncation=True,
-            max_length=256,
-        )
+    # ------------------------------------------------------------------
+    # Batch scoring – same API as the HuggingFace version
+    # ------------------------------------------------------------------
+    def score_reviews_batch(self, texts: Iterable[str]) -> List[float]:
+        """
+        Analyze a batch of review texts and return ratings in [0, 5].
 
-        if self.device >= 0:
-            inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        For each text:
+          1. Use VADER to get 'compound' score in [-1, 1].
+          2. Map to [0, 5]:
+                rating = (compound + 1) / 2 * 5
+          3. Clamp to [0, 5] and round to 2 decimals.
 
-        # Forward pass (no gradients needed)
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-            logits = outputs.logits  # shape [1, 5]
+        Empty / whitespace-only texts are treated as neutral 2.5.
+        """
+        results: List[float] = []
 
-        # Convert logits -> probabilities via softmax
-        probs = F.softmax(logits, dim=-1)[0]  # shape [5]
+        for t in texts:
+            if not t or not str(t).strip():
+                results.append(2.5)
+                continue
 
-        # Expected star value in [1, 5]
-        rating = 0.0
-        for i in range(5):
-            stars = i + 1  # labels are 1..5 stars
-            rating += stars * float(probs[i])
+            scores = self.analyzer.polarity_scores(str(t))
+            compound = scores.get("compound", 0.0)
 
-        # Round for stability
-        return round(float(rating), 2)
+            # Map [-1, 1] -> [0, 5]
+            rating = (compound + 1.0) / 2.0 * 5.0
+
+            # Clamp to [0, 5]
+            rating = max(0.0, min(5.0, rating))
+
+            # Round to 2 decimals
+            rating = round(rating, 2)
+
+            results.append(rating)
+
+        return results
