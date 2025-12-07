@@ -1,0 +1,4 @@
+Flask==3.0.3
+pandas==2.2.2
+numpy==2.0.2
+nltk==3.9.1

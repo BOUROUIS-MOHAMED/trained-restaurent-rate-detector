@@ -1,0 +1,214 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Restaurant Sentiment Rating – Demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link
+        rel="stylesheet"
+        href="{{ url_for('static', filename='styles.css') }}"
+    />
+</head>
+<body>
+<!-- Global loading overlay -->
+<div id="overlay" class="overlay hidden">
+    <div class="overlay-content">
+        <div class="loader"></div>
+        <div class="overlay-text-wrapper">
+            <p class="overlay-title">Processing…</p>
+            <p id="overlay-text" class="overlay-subtitle">Loading…</p>
+        </div>
+    </div>
+</div>
+
+<div class="page">
+    <!-- Top bar / header -->
+    <header class="header">
+        <div class="header-main">
+            <h1>Restaurant Sentiment Rating</h1>
+            <p>
+                A multi-threaded Flask API that scans a Yelp reviews dataset,
+                extracts all restaurants, and computes sentiment-based ratings
+                (0–5) per year using a pre-trained model.
+            </p>
+            <div class="phase-chips">
+                <span class="chip chip-soft">Phase 1: Discover restaurants</span>
+                <span class="chip chip-soft">Phase 2: Analyze reviews</span>
+                <span class="chip chip-soft">Phase 3: Yearly rating threads</span>
+            </div>
+        </div>
+        <div class="header-side">
+            <div class="endpoint-card">
+                <div class="endpoint-label">Endpoints</div>
+                <code class="endpoint-code">GET /api/v1/getAllRestaurents</code>
+                <code class="endpoint-code">GET /api/v1/getrestaurantrate</code>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main 2-column layout -->
+    <main class="layout">
+        <!-- LEFT: Restaurants list + Phase 1 traces -->
+        <section class="panel">
+            <div class="panel-header">
+                <div>
+                    <h2>Dataset overview</h2>
+                    <p class="muted">
+                        Phase 1 – the server spawns threads that scan the dataset
+                        by chunks of <strong>100 rows</strong> to extract every
+                        restaurant and count its reviews.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-bar">
+                <div class="stat">
+                    <div class="stat-icon">📄</div>
+                    <div class="stat-text">
+                        <span id="stat-total-reviews" class="stat-value">–</span>
+                        <span class="stat-label">Total reviews</span>
+                    </div>
+                </div>
+                <div class="stat">
+                    <div class="stat-icon">🍽️</div>
+                    <div class="stat-text">
+                        <span id="stat-total-restaurants" class="stat-value">–</span>
+                        <span class="stat-label">Restaurants</span>
+                    </div>
+                </div>
+                <div class="stat">
+                    <div class="stat-icon">⚙️</div>
+                    <div class="stat-text">
+                        <span id="stat-total-threads" class="stat-value">–</span>
+                        <span class="stat-label">Phase 1 threads</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Filter -->
+            <div class="filter-card">
+                <div class="filter-row">
+                    <label for="filter-input">Filter by restaurant name or slug</label>
+                    <div class="filter-input-wrapper">
+                        <span class="filter-icon">🔍</span>
+                        <input
+                            id="filter-input"
+                            type="text"
+                            placeholder="Start typing to search…"
+                            autocomplete="off"
+                        />
+                    </div>
+                </div>
+                <p class="muted filter-hint">
+                    Names are inferred from the Yelp URL slug
+                    (e.g. <code>milk-bar-las-vegas-las-vegas-3</code> → “Milk Bar Las Vegas Las Vegas 3”).
+                </p>
+            </div>
+
+            <!-- Restaurants table -->
+            <div class="table-card">
+                <div class="table-header-row">
+                    <h3 class="table-title">Restaurants</h3>
+                    <p class="table-subtitle muted">
+                        Click <strong>Check</strong> on a row to run Phase 2 & 3 for that restaurant.
+                    </p>
+                </div>
+                <div class="table-wrapper">
+                    <table class="table">
+                        <thead>
+                        <tr>
+                            <th>Restaurant</th>
+                            <th class="cell-center">Reviews</th>
+                            <th class="cell-right">Action</th>
+                        </tr>
+                        </thead>
+                        <tbody id="restaurants-table-body">
+                        <tr>
+                            <td colspan="3" class="muted">
+                                Loading restaurants from dataset…
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Phase 1 thread traces -->
+            <details class="thread-details">
+                <summary>Show Phase 1 thread traces</summary>
+                <p class="muted thread-explainer">
+                    Each row below corresponds to one thread that processed a block of
+                    100 reviews (or fewer for the last chunk).
+                </p>
+                <div class="table-wrapper compact">
+                    <table class="table thread-table">
+                        <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>Rows processed</th>
+                            <th>Unique restaurants</th>
+                            <th>Duration (ms)</th>
+                        </tr>
+                        </thead>
+                        <tbody id="phase1-threads-table-body">
+                        <tr>
+                            <td colspan="4" class="muted">
+                                Traces will appear here once the dataset is loaded.
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        </section>
+
+        <!-- RIGHT: Analysis details + Phase 2 & 3 traces -->
+        <section class="panel panel-secondary">
+            <div class="panel-header">
+                <div>
+                    <h2>Restaurant analysis</h2>
+                    <p class="muted">
+                        Phase 2 – threads scan the dataset again to extract and score
+                        reviews for one restaurant.<br />
+                        Phase 3 – up to <strong>10 year-threads</strong> compute yearly ratings.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Placeholder (when nothing selected yet) -->
+            <div id="analysis-placeholder" class="placeholder">
+                <div class="placeholder-icon">✨</div>
+                <div>
+                    <p class="placeholder-title">Select a restaurant to get started</p>
+                    <p class="placeholder-text">
+                        Choose a row on the left and click <strong>Check</strong>.
+                        The server will:
+                    </p>
+                    <ul class="placeholder-list">
+                        <li>Spawn threads to scan the dataset in chunks of 100 reviews (Phase 2).</li>
+                        <li>Apply the sentiment model on each matching review.</li>
+                        <li>Spawn up to 10 threads, one per year, to compute yearly averages (Phase 3).</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Dynamic analysis content -->
+            <div id="analysis-content" class="analysis hidden"></div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <p>
+            API endpoints:
+            <code>/api/v1/getAllRestaurents</code> &
+            <code>/api/v1/getrestaurantrate?name=&lt;name&gt;</code>
+        </p>
+    </footer>
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
