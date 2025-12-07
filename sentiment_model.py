@@ -126,3 +126,4 @@ class SentimentModel:
             results.append(rating)
 
         return results
+
