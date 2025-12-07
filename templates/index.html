@@ -34,8 +34,7 @@
             </p>
             <div class="phase-chips">
                 <span class="chip chip-soft">Phase 1: Discover restaurants</span>
-                <span class="chip chip-soft">Phase 2: Analyze reviews</span>
-                <span class="chip chip-soft">Phase 3: Yearly rating threads</span>
+                <span class="chip chip-soft">Phase 2: Analyze restaurant sentiment</span>
             </div>
         </div>
         <div class="header-side">
@@ -53,7 +52,7 @@
         <section class="panel">
             <div class="panel-header">
                 <div>
-                    <h2>Dataset overview</h2>
+                    <h2>Dataset overview (Phase 1)</h2>
                     <p class="muted">
                         Phase 1 – the server spawns threads that scan the dataset
                         by chunks of <strong>100 rows</strong> to extract every
@@ -112,7 +111,7 @@
                 <div class="table-header-row">
                     <h3 class="table-title">Restaurants</h3>
                     <p class="table-subtitle muted">
-                        Click <strong>Check</strong> on a row to run Phase 2 & 3 for that restaurant.
+                        Click <strong>Check</strong> on a row to run Phase 2 for that restaurant.
                     </p>
                 </div>
                 <div class="table-wrapper">
@@ -164,15 +163,16 @@
             </details>
         </section>
 
-        <!-- RIGHT: Analysis details + Phase 2 & 3 traces -->
+        <!-- RIGHT: Analysis details (Phase 2) -->
         <section class="panel panel-secondary">
             <div class="panel-header">
                 <div>
-                    <h2>Restaurant analysis</h2>
+                    <h2>Restaurant analysis (Phase 2)</h2>
                     <p class="muted">
-                        Phase 2 – threads scan the dataset again to extract and score
-                        reviews for one restaurant.<br />
-                        Phase 3 – up to <strong>10 year-threads</strong> compute yearly ratings.
+                        In Phase 2, the server uses multiple threads to process
+                        only the reviews of the selected restaurant (chunks of 100),
+                        run the sentiment model, and aggregate per-year ratings
+                        for the last 10 years.
                     </p>
                 </div>
             </div>
@@ -184,12 +184,12 @@
                     <p class="placeholder-title">Select a restaurant to get started</p>
                     <p class="placeholder-text">
                         Choose a row on the left and click <strong>Check</strong>.
-                        The server will:
+                        For that restaurant, the server will:
                     </p>
                     <ul class="placeholder-list">
-                        <li>Spawn threads to scan the dataset in chunks of 100 reviews (Phase 2).</li>
-                        <li>Apply the sentiment model on each matching review.</li>
-                        <li>Spawn up to 10 threads, one per year, to compute yearly averages (Phase 3).</li>
+                        <li>Use the Phase 1 cache to grab only its reviews.</li>
+                        <li>Spawn threads that process those reviews in chunks of 100.</li>
+                        <li>Apply the sentiment model and aggregate ratings per year (last 10 years).</li>
                     </ul>
                 </div>
             </div>

@@ -157,7 +157,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // ----------------------------------------------------------
-  // Phase 2 & 3 – Analyze one restaurant
+  // Phase 2 – Analyze one restaurant (merged analysis)
   // ----------------------------------------------------------
 
   async function analyzeRestaurant(name) {
@@ -198,16 +198,16 @@ document.addEventListener("DOMContentLoaded", () => {
     const years = Object.keys(ratingsByYear).sort();
     const totalForRestaurant = data.restaurant_total_reviews ?? 0;
 
-    const phase2 = data.phase2 || {};
-    const phase2Threads = phase2.threads || [];
-    const phase2TotalThreads = phase2.total_threads ?? phase2Threads.length;
-    const phase2TotalReviews =
-      phase2.total_reviews_processed ?? data.dataset_total_reviews ?? 0;
-
-    const phase3 = data.phase3 || {};
-    const phase3Threads = phase3.threads || [];
-    const phase3TotalYearThreads =
-      phase3.total_year_threads ?? phase3Threads.length;
+    const analysis = data.analysis || {};
+    const analysisThreads = analysis.threads || [];
+    const analysisTotalThreads =
+      analysis.total_threads != null
+        ? analysis.total_threads
+        : analysisThreads.length;
+    const analysisTotalReviews =
+      analysis.total_reviews_processed != null
+        ? analysis.total_reviews_processed
+        : totalForRestaurant;
 
     let html = `
       <div class="analysis-header">
@@ -227,13 +227,13 @@ document.addEventListener("DOMContentLoaded", () => {
       </div>
     `;
 
-    // Yearly ratings (Phase 3 result)
+    // Yearly ratings
     html += `<section class="analysis-section">
       <h4>Yearly ratings (last 10 years)</h4>
     `;
 
     if (!years.length) {
-      html += `<p class="muted">No yearly ratings could be computed (no reviews in the last 10 years).</p>`;
+      html += `<p class="muted">No yearly ratings could be computed (no reviews with a valid year in the last 10 years).</p>`;
     } else {
       html += `
         <div class="table-wrapper compact">
@@ -266,18 +266,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     html += `</section>`;
 
-    // Phase 2 traces
+    // Analysis threads (merged Phase 2)
     html += `
       <section class="analysis-section">
-        <h4>Phase 2 – Review processing threads</h4>
+        <h4>Analysis threads (chunks of 100 reviews)</h4>
         <p class="muted">
-          Threads: <strong>${phase2TotalThreads}</strong>,
-          dataset rows processed: <strong>${phase2TotalReviews}</strong>
+          Threads: <strong>${analysisTotalThreads}</strong>,
+          restaurant reviews processed: <strong>${analysisTotalReviews}</strong>
         </p>
     `;
 
-    if (!phase2Threads.length) {
-      html += `<p class="muted">No thread traces available for Phase 2.</p>`;
+    if (!analysisThreads.length) {
+      html += `<p class="muted">No thread traces available for this analysis.</p>`;
     } else {
       html += `
         <div class="table-wrapper compact">
@@ -286,66 +286,29 @@ document.addEventListener("DOMContentLoaded", () => {
               <tr>
                 <th>#</th>
                 <th>Rows processed</th>
-                <th>Matched reviews</th>
+                <th>Rows with year</th>
+                <th>Years covered</th>
                 <th>Duration (ms)</th>
               </tr>
             </thead>
             <tbody>
       `;
-      phase2Threads
+      analysisThreads
         .slice()
         .sort((a, b) => (a.thread_index ?? 0) - (b.thread_index ?? 0))
         .forEach((t) => {
+          const yearsInfo = t.years || {};
+          const yearsList = Object.keys(yearsInfo)
+            .sort()
+            .map((y) => `${y} (${yearsInfo[y]})`)
+            .join(", ");
+
           html += `
             <tr>
               <td>${t.thread_index ?? "-"}</td>
               <td>${t.rows_processed ?? "-"}</td>
-              <td>${t.matched_reviews ?? "-"}</td>
-              <td>${t.duration_ms ?? "-"}</td>
-            </tr>
-          `;
-        });
-      html += `
-            </tbody>
-          </table>
-        </div>
-      `;
-    }
-
-    html += `</section>`;
-
-    // Phase 3 traces (per-year threads)
-    html += `
-      <section class="analysis-section">
-        <h4>Phase 3 – Yearly rating threads</h4>
-        <p class="muted">
-          Year threads created: <strong>${phase3TotalYearThreads}</strong>
-        </p>
-    `;
-
-    if (!phase3Threads.length) {
-      html += `<p class="muted">No thread traces available for Phase 3.</p>`;
-    } else {
-      html += `
-        <div class="table-wrapper compact">
-          <table class="table thread-table">
-            <thead>
-              <tr>
-                <th>Year</th>
-                <th>Rows processed</th>
-                <th>Duration (ms)</th>
-              </tr>
-            </thead>
-            <tbody>
-      `;
-      phase3Threads
-        .slice()
-        .sort((a, b) => (a.year ?? 0) - (b.year ?? 0))
-        .forEach((t) => {
-          html += `
-            <tr>
-              <td>${t.year ?? "-"}</td>
-              <td>${t.rows_processed ?? "-"}</td>
+              <td>${t.rows_with_year ?? "-"}</td>
+              <td>${yearsList || "–"}</td>
               <td>${t.duration_ms ?? "-"}</td>
             </tr>
           `;
